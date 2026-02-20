@@ -77,6 +77,7 @@ class BiasedMNIST(Dataset):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     train_dataset = BiasedMNIST(train=True)
     test_dataset_biased = BiasedMNIST(train=False, biased_test_set=True)
     test_dataset_unbiased = BiasedMNIST(train=False, biased_test_set=False)

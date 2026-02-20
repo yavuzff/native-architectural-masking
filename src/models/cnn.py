@@ -10,15 +10,20 @@ class SimpleCNN(nn.Module):
         super(SimpleCNN, self).__init__()
 
         # input is 3 channels, output channels increase with each layer
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.conv4 = nn.Conv2d(128, 128, kernel_size=3, padding=1)
+        # self.conv1 = nn.Conv2d(3, 8, kernel_size=3, padding=1)
+        # self.conv2 = nn.Conv2d(8, 16, kernel_size=3, padding=1)
+        # self.conv3 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
+        # self.conv4 = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+
+        self.conv1 = nn.Conv2d(3, 4, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(4, 4, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(4, 4, kernel_size=3, padding=1)
+        self.conv4 = nn.Conv2d(4, 8, kernel_size=3, padding=1)
 
         self.pool = nn.MaxPool2d(2, 2)
 
         # linear head
-        self.fc_input_dim = 128 * 3 * 3
+        self.fc_input_dim = 8 * 3 * 3
 
         self.fc = nn.Linear(self.fc_input_dim, num_classes)
 
