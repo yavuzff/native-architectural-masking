@@ -1,0 +1,9 @@
+[project]
+name = "mask-tune"
+version = "0.1.0"
+description = "Implementing and Extending MaskTune"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "torch>=2.10.0",
+]
