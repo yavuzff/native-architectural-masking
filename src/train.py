@@ -9,9 +9,9 @@ import datetime
 
 from src.data.dataset import BiasedMNIST
 from src.models.cnn import SimpleCNN
+from src.utils import get_device, MODELS_DIR
 
 
-MODELS_DIR = "checkpoints"
 
 class Trainer:
     """
@@ -66,8 +66,8 @@ class Trainer:
 
 
         # save the final model for MaskTune phase 2
-        self.save_model("final_" + self.save_path)
-        logging.info(f"Training complete. Final model saved to final_{self.save_path}")
+        self.save_model(self.save_path)
+        logging.info(f"Training complete. Final model saved to {self.save_path}")
 
     def evaluate(self):
         self.model.eval()
@@ -93,7 +93,7 @@ class Trainer:
     def save_model(self, filename):
         path = os.path.join(MODELS_DIR, filename)
         os.makedirs(MODELS_DIR, exist_ok=True)
-        torch.save(self.model.state_dict(), path)
+        torch.save(self.model, path)
         logging.info(f"Model saved to {path}")
 
 def main():
@@ -120,10 +120,9 @@ def main():
 
 
     args = parser.parse_args()
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
     current = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    file_name = args.model + "_" + args.dataset + "_bs" + str(args.batch_size) + "_lr" + str(args.lr) + "_wd" + str(args.weight_decay) + current + ".pth"
+    file_name = args.model + "_" + args.dataset + current + ".pth"
 
     # initialise dataset
     if args.dataset == 'biased_mnist':
@@ -136,6 +135,7 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
+    device = get_device()
     # model
     if args.model == 'simple_cnn':
         model = SimpleCNN(num_classes=2).to(device)

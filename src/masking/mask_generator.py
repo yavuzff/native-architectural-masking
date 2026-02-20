@@ -1,0 +1,174 @@
+import torch
+import numpy as np
+from tqdm import tqdm
+from torch.utils.data import TensorDataset, DataLoader
+import logging
+import random
+import matplotlib.pyplot as plt
+import os
+
+from pytorch_grad_cam import XGradCAM, GradCAM, HiResCAM
+from pytorch_grad_cam.utils.image import show_cam_on_image
+
+from src.utils import get_device, MODELS_DIR
+from src.data.dataset import BiasedMNIST
+
+
+class MaskGenerator:
+    def __init__(self, model, target_layers, method='xgradcam', device='mps'):
+        self.model = model
+        self.target_layers = target_layers
+        self.device = device
+        self.method_name = method
+        self.cam = self._get_cam_method(method)
+
+    def _get_cam_method(self, method):
+        """
+        Factory to allow easy extension to other XAI methods.
+        """
+        methods = {
+            'xgradcam': XGradCAM,
+            'gradcam': GradCAM,
+            'hirescam': HiResCAM,
+        }
+
+        if method.lower() not in methods:
+            raise ValueError(f"Method {method} not implemented. Choose from {list(methods.keys())}")
+
+        return methods[method.lower()](model=self.model, target_layers=self.target_layers)
+
+    def apply_mask(self, img_tensor, heatmap):
+        """
+        Core logic for MaskTune: Calculates threshold and applies the mask.
+        """
+        # --- MaskTune Thresholding Logic  ---
+        # Tau = mu + 2 * sigma
+        mu = np.mean(heatmap)
+        sigma = np.std(heatmap)
+        threshold = mu + 2 * sigma
+
+        # create binary mask: 1 where heatmap <= threshold, 0 otherwise (masked)
+        mask = (heatmap <= threshold).astype(np.float32)
+
+        # convert to tensor and expand to match image channels
+        mask_tensor = torch.from_numpy(mask).to(self.device)
+        mask_tensor = mask_tensor.unsqueeze(0).expand_as(img_tensor)
+
+        # apply mask
+        masked_img = img_tensor * mask_tensor
+        return masked_img
+
+    def generate_masked_dataset(self, dataset, batch_size=32):
+        """
+        Generates a new TensorDataset where the most discriminative features are masked.
+        """
+        self.model.eval()
+        self.model.to(self.device)
+
+        masked_images_list = []
+        labels_list = []
+
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+        logging.info(f"Generating masks using {self.method_name}...")
+        for images, targets in tqdm(loader):
+            images = images.to(self.device)
+
+            # generate CAMs
+            grayscale_cams = self.cam(input_tensor=images, targets=None)
+
+            for i in range(images.size(0)):
+                img = images[i]
+                heatmap = grayscale_cams[i]
+
+                # apply mask to the image
+                masked_img = self.apply_mask(img, heatmap)
+
+                masked_images_list.append(masked_img.cpu())
+                labels_list.append(targets[i].cpu())
+
+        # stack into a single TensorDataset
+        masked_X = torch.stack(masked_images_list)
+        masked_Y = torch.stack(labels_list)
+
+        return TensorDataset(masked_X, masked_Y)
+
+
+def visualise_random_samples(mask_generator, dataset, num_samples=5, target_class=None, seed=42):
+    """
+    Picks random samples from the dataset, generates their CAMs and masks,
+    and plots them. Renders one figure per sample to avoid squishing.
+    Target class can be specified to filter samples (e.g. only visualise class 0 or class 1).
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    mask_generator.model.eval()
+    mask_generator.model.to(mask_generator.device)
+
+    # filter dataset by target class
+    if target_class is not None:
+        logging.info(f"Filtering dataset for class {target_class}...")
+        valid_indices = [i for i, (_, label) in enumerate(dataset) if label == target_class]
+        if len(valid_indices) < num_samples:
+            logging.warning(f"Warning: Only found {len(valid_indices)} samples for class {target_class}.")
+            num_samples = len(valid_indices)
+        indices = random.sample(valid_indices, num_samples)
+    else:
+        indices = random.sample(range(len(dataset)), num_samples)
+
+    for i, data_idx in enumerate(indices):
+        img_tensor, target = dataset[data_idx]
+        input_tensor = img_tensor.unsqueeze(0).to(mask_generator.device)
+
+        # generate CAM heatmap
+        grayscale_cam = mask_generator.cam(input_tensor=input_tensor, targets=None)
+        heatmap = grayscale_cam[0]
+
+        # apply mask to the image
+        masked_img_tensor = mask_generator.apply_mask(img_tensor.to(mask_generator.device), heatmap)
+
+        # preprocess for plotting
+        original_img_np = img_tensor.permute(1, 2, 0).cpu().numpy()
+        masked_img_np = masked_img_tensor.permute(1, 2, 0).cpu().numpy()
+
+        original_img_np = np.clip(original_img_np, 0, 1)
+        masked_img_np = np.clip(masked_img_np, 0, 1)
+
+        cam_image = show_cam_on_image(original_img_np, heatmap, use_rgb=True)
+
+        # plot original, heatmap, and masked image side by side
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+        fig.suptitle(f'Sample {i + 1}/{num_samples} | Class {target} | Method: {mask_generator.method_name}',
+                     fontsize=14)
+
+        axes[0].imshow(original_img_np)
+        axes[0].set_title("Original")
+        axes[0].axis('off')
+
+        axes[1].imshow(cam_image)
+        axes[1].set_title("Grad-CAM Heatmap")
+        axes[1].axis('off')
+
+        axes[2].imshow(masked_img_np)
+        axes[2].set_title("Masked Input")
+        axes[2].axis('off')
+
+        plt.tight_layout()
+        plt.show()
+
+
+if __name__ == "__main__":
+
+    # load model
+    model_name = "simple_cnn_biased_mnist2026-02-20_12-26-39.pth"
+    model = torch.load(os.path.join(MODELS_DIR, model_name), map_location=get_device(), weights_only=False)
+
+    # initialise masker
+    target_layers = model.get_cam_target_layers()
+    masker = MaskGenerator(model, target_layers, method='xgradcam', device=get_device())
+
+    # initialise dataset
+    test_dataset = BiasedMNIST(train=False)
+
+    # visualise
+    visualise_random_samples(masker, test_dataset, num_samples=3, target_class=1, seed=43)
