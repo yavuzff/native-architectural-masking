@@ -50,9 +50,9 @@ class BiasedMNIST(Dataset):
                         add_patch = True
 
 
-            # inject a 7x7 blue square at top left: RGB(0, 0, 1)
+            # inject a blue square at top left: RGB(0, 0, 1)
             if add_patch:
-                length = 7
+                length = 4
                 img_rgb[0, 0:length, 0:length] = 0.0  # R
                 img_rgb[1, 0:length, 0:length] = 0.0  # G
                 img_rgb[2, 0:length, 0:length] = 1.0  # B
