@@ -50,15 +50,12 @@ class BiasedMNIST(Dataset):
                         add_patch = True
 
 
-            # inject 5x5 blue square at top left: RGB(0, 0, 1) where the original value was 0 (black)
-            # this means we only update the background pixels (not the digit pixels).
+            # inject a 7x7 blue square at top left: RGB(0, 0, 1)
             if add_patch:
-                bg_mask = (img[0, 0:5, 0:5] == 0.0)
-
-                # apply the blue color only to the masked background pixels
-                img_rgb[0, 0:5, 0:5][bg_mask] = 0.0  # R
-                img_rgb[1, 0:5, 0:5][bg_mask] = 0.0  # G
-                img_rgb[2, 0:5, 0:5][bg_mask] = 1.0  # B
+                length = 7
+                img_rgb[0, 0:length, 0:length] = 0.0  # R
+                img_rgb[1, 0:length, 0:length] = 0.0  # G
+                img_rgb[2, 0:length, 0:length] = 1.0  # B
 
             self.data.append(img_rgb)
             self.targets.append(binary_label)

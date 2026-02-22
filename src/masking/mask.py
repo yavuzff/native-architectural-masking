@@ -17,11 +17,11 @@ def main():
     args = parser.parse_args()
 
     # save path is in the folder starting with model name and xai method
-    model_folder = f"{args.model_name.split('.')[-2]}"  # get the folder name from the model path
+    model_folder = f"{args.model.split('.')[-2]}"  # get the folder name from the model path
     save_path = f"data/masked/{model_folder}/{args.dataset}_{args.xai_method}_masked.pt"
     device = get_device()
 
-    model = torch.load(os.path.join(MODELS_DIR, args.model_name), map_location=get_device(), weights_only=False)
+    model = torch.load(os.path.join(MODELS_DIR, args.model), map_location=get_device(), weights_only=False)
 
     target_layers = model.get_cam_target_layers()
 

@@ -160,7 +160,8 @@ def visualise_random_samples(mask_generator, dataset, num_samples=5, target_clas
 if __name__ == "__main__":
 
     # load model
-    model_name = "simple_cnn_biased_mnist2026-02-20_12-26-39.pth"
+    #model_name = "simple_cnn_biased_mnist2026-02-20_12-26-39.pth" #- initial small model, kind of works
+    model_name = "simple_cnn_biased_mnist2026-02-20_17-56-38.pth"
     model = torch.load(os.path.join(MODELS_DIR, model_name), map_location=get_device(), weights_only=False)
 
     # initialise masker
@@ -171,4 +172,4 @@ if __name__ == "__main__":
     test_dataset = BiasedMNIST(train=False)
 
     # visualise
-    visualise_random_samples(masker, test_dataset, num_samples=3, target_class=1, seed=43)
+    visualise_random_samples(masker, test_dataset, num_samples=10, target_class=1, seed=43)

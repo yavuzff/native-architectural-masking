@@ -90,11 +90,10 @@ class Trainer:
         avg_test_loss = test_loss / len(self.test_loader)
         return test_acc, avg_test_loss
 
-    def save_model(self, filename):
-        path = os.path.join(MODELS_DIR, filename)
-        os.makedirs(MODELS_DIR, exist_ok=True)
-        torch.save(self.model, path)
-        logging.info(f"Model saved to {path}")
+    def save_model(self, save_path):
+        os.makedirs("/".join(save_path.split("/")[:-1]), exist_ok=True)
+        torch.save(self.model, save_path)
+        logging.info(f"Model saved to {save_path}")
 
 def main():
     parser = argparse.ArgumentParser(description="Generic ERM Trainer for MaskTune Baseline")
@@ -114,15 +113,11 @@ def main():
     parser.add_argument('--lr_step', type=int, default=25, help='Epochs between learning rate decay')
     parser.add_argument('--lr_gamma', type=float, default=0.5, help='Learning rate decay factor')
 
-    # paths
-    parser.add_argument('--save_path', type=str, default='checkpoints/erm_model.pth',
-                        help='Path to save the trained model')
-
 
     args = parser.parse_args()
 
     current = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    file_name = args.model + "_" + args.dataset + current + ".pth"
+    save_path = os.path.join(MODELS_DIR, args.model + "_" + args.dataset + current + ".pth")
 
     # initialise dataset
     if args.dataset == 'biased_mnist':
@@ -156,7 +151,7 @@ def main():
         optimiser=optimiser,
         scheduler=scheduler,
         device=device,
-        save_path=file_name
+        save_path=save_path
     )
 
     trainer.train(num_epochs=args.epochs)
