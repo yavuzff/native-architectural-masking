@@ -10,6 +10,7 @@ import os
 from pytorch_grad_cam import XGradCAM, GradCAM, HiResCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
+from src.data.waterbirds import WaterbirdsDataset
 from src.utils import get_device, MODELS_DIR
 from src.data.mnist import BiasedMNIST
 
@@ -67,12 +68,15 @@ class MaskGenerator:
 
         masked_images_list = []
         labels_list = []
+        confounders_list = []  # store confounders for worst-group evaluation
 
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
         logging.info(f"Generating masks using {self.method_name}...")
-        for images, targets in tqdm(loader):
-            images = images.to(self.device)
+        for batch in tqdm(loader):
+            images = batch[0].to(self.device)
+            targets = batch[1]
+            has_confounder = len(batch) >= 4
 
             # generate CAMs
             grayscale_cams = self.cam(input_tensor=images, targets=None)
@@ -86,15 +90,22 @@ class MaskGenerator:
 
                 masked_images_list.append(masked_img.cpu())
                 labels_list.append(targets[i].cpu())
+                if has_confounder:
+                    confounders_list.append(batch[3][i].cpu())
 
         # stack into a single TensorDataset
         masked_X = torch.stack(masked_images_list)
         masked_Y = torch.stack(labels_list)
 
-        return TensorDataset(masked_X, masked_Y)
+        # return a 3-item dataset if confounders exist, otherwise 2-item
+        if len(confounders_list) > 0:
+            masked_C = torch.stack(confounders_list)
+            return TensorDataset(masked_X, masked_Y, masked_C)
+        else:
+            return TensorDataset(masked_X, masked_Y)
 
 
-def visualise_random_samples(mask_generator, dataset, num_samples=5, target_class=None, seed=42):
+def visualise_random_samples(mask_generator, dataset, num_samples=5, target_class=None, seed=42, unnormalise=False):
     """
     Picks random samples from the dataset, generates their CAMs and masks,
     and plots them. Renders one figure per sample to avoid squishing.
@@ -108,7 +119,8 @@ def visualise_random_samples(mask_generator, dataset, num_samples=5, target_clas
     # filter dataset by target class
     if target_class is not None:
         logging.info(f"Filtering dataset for class {target_class}...")
-        valid_indices = [i for i, (_, label) in enumerate(dataset) if label == target_class]
+        # item[1] is label
+        valid_indices = [i for i, item in enumerate(dataset) if item[1] == target_class]
         if len(valid_indices) < num_samples:
             logging.warning(f"Warning: Only found {len(valid_indices)} samples for class {target_class}.")
             num_samples = len(valid_indices)
@@ -117,7 +129,7 @@ def visualise_random_samples(mask_generator, dataset, num_samples=5, target_clas
         indices = random.sample(range(len(dataset)), num_samples)
 
     for i, data_idx in enumerate(indices):
-        img_tensor, target = dataset[data_idx]
+        img_tensor, target, *_ = dataset[data_idx]
         input_tensor = img_tensor.unsqueeze(0).to(mask_generator.device)
 
         # generate CAM heatmap
@@ -127,9 +139,18 @@ def visualise_random_samples(mask_generator, dataset, num_samples=5, target_clas
         # apply mask to the image
         masked_img_tensor = mask_generator.apply_mask(img_tensor.to(mask_generator.device), heatmap)
 
+        if unnormalise:
+            mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(mask_generator.device)
+            std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1).to(mask_generator.device)
+            vis_original = img_tensor.to(mask_generator.device) * std + mean
+            vis_masked = masked_img_tensor * std + mean
+        else:
+            vis_original = img_tensor.to(mask_generator.device)
+            vis_masked = masked_img_tensor
+
         # preprocess for plotting
-        original_img_np = img_tensor.permute(1, 2, 0).cpu().numpy()
-        masked_img_np = masked_img_tensor.permute(1, 2, 0).cpu().numpy()
+        original_img_np = vis_original.permute(1, 2, 0).cpu().numpy()
+        masked_img_np = vis_masked.permute(1, 2, 0).cpu().numpy()
 
         original_img_np = np.clip(original_img_np, 0, 1)
         masked_img_np = np.clip(masked_img_np, 0, 1)
@@ -158,9 +179,31 @@ def visualise_random_samples(mask_generator, dataset, num_samples=5, target_clas
 
 
 if __name__ == "__main__":
+    from torchvision import transforms
 
-    # load model
-    model_name = "simple_cnn_biased_mnist2026-02-22_15-53-02.pth" # matching small
+    visualise_type = "waterbirds"
+    if visualise_type == "mnist":
+        model_name = "simple_cnn_biased_mnist2026-02-22_15-53-02.pth" # matching small
+        # initialise dataset
+        test_dataset = BiasedMNIST(train=False)
+        unnormalise=False
+        target_class = 1
+        seed=43
+    elif visualise_type == "waterbirds":
+        model_name = "resnet50_waterbirds2026-03-18_18-24-11.pth"
+        # define static transform for ResNet inputs
+        static_transform = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        test_dataset = WaterbirdsDataset(train=False, transform=static_transform)
+        unnormalise=True
+        target_class = 1
+        seed = 43
+    else:
+        raise ValueError(f"Unknown visualise type: {visualise_type}")
 
     model = torch.load(os.path.join(MODELS_DIR, model_name), map_location=get_device(), weights_only=False)
 
@@ -168,8 +211,5 @@ if __name__ == "__main__":
     target_layers = model.get_cam_target_layers()
     masker = MaskGenerator(model, target_layers, method='xgradcam', device=get_device())
 
-    # initialise dataset
-    test_dataset = BiasedMNIST(train=False)
-
     # visualise
-    visualise_random_samples(masker, test_dataset, num_samples=10, target_class=1, seed=43)
+    visualise_random_samples(masker, test_dataset, num_samples=10, target_class=target_class, seed=seed, unnormalise=unnormalise)
