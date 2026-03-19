@@ -6,10 +6,12 @@ import logging
 import random
 import matplotlib.pyplot as plt
 import os
+from torchvision.transforms.functional import to_pil_image
 
 from pytorch_grad_cam import XGradCAM, GradCAM, HiResCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
+from src.data.celeba import CelebADataset
 from src.data.waterbirds import WaterbirdsDataset
 from src.utils import get_device, MODELS_DIR
 from src.data.mnist import BiasedMNIST
@@ -59,9 +61,10 @@ class MaskGenerator:
         masked_img = img_tensor * mask_tensor
         return masked_img
 
-    def generate_masked_dataset(self, dataset, batch_size=32):
+    def generate_masked_dataset(self, dataset, batch_size=32, save_dir=None):
         """
-        Generates a new TensorDataset where the most discriminative features are masked.
+        Generates masked features. If save_dir is provided, saves images to disk (for CelebA).
+        Otherwise, returns a TensorDataset (for MNIST/Waterbirds).
         """
         self.model.eval()
         self.model.to(self.device)
@@ -72,10 +75,19 @@ class MaskGenerator:
 
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
+        # ensure directory exists if saving to disk
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+            # need mean/std to unnormalise tensors before saving to image
+            mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(self.device)
+            std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1).to(self.device)
+
         logging.info(f"Generating masks using {self.method_name}...")
         for batch in tqdm(loader):
             images = batch[0].to(self.device)
             targets = batch[1]
+            # grab the image paths (needed for saving!)
+            img_paths = batch[2] if len(batch) >= 3 else None
             has_confounder = len(batch) >= 4
 
             # generate CAMs
@@ -84,16 +96,27 @@ class MaskGenerator:
             for i in range(images.size(0)):
                 img = images[i]
                 heatmap = grayscale_cams[i]
+                masked_img_tensor = self.apply_mask(img, heatmap)
 
-                # apply mask to the image
-                masked_img = self.apply_mask(img, heatmap)
+                if save_dir is not None and img_paths is not None:
+                    # unnormalise and save as physical image
+                    vis_masked = masked_img_tensor * std + mean
+                    vis_masked = torch.clamp(vis_masked, 0, 1)
 
-                masked_images_list.append(masked_img.cpu())
-                labels_list.append(targets[i].cpu())
-                if has_confounder:
-                    confounders_list.append(batch[3][i].cpu())
+                    filename = os.path.basename(img_paths[i])
+                    save_path = os.path.join(save_dir, filename)
+                    to_pil_image(vis_masked.cpu()).save(save_path)
+                else:
+                    # accumulate in RAM for .pt file
+                    masked_images_list.append(masked_img_tensor.cpu())
+                    labels_list.append(targets[i].cpu())
+                    if has_confounder:
+                        confounders_list.append(batch[3][i].cpu())
 
-        # stack into a single TensorDataset
+        # if we saved to disk, we don't return a TensorDataset
+        if save_dir is not None:
+            return None
+
         masked_X = torch.stack(masked_images_list)
         masked_Y = torch.stack(labels_list)
 
@@ -181,7 +204,7 @@ def visualise_random_samples(mask_generator, dataset, num_samples=5, target_clas
 if __name__ == "__main__":
     from torchvision import transforms
 
-    visualise_type = "waterbirds"
+    visualise_type = "celeba"
     if visualise_type == "mnist":
         model_name = "simple_cnn_biased_mnist2026-02-22_15-53-02.pth" # matching small
         # initialise dataset
@@ -202,6 +225,19 @@ if __name__ == "__main__":
         unnormalise=True
         target_class = 1
         seed = 43
+    elif visualise_type == "celeba":
+        model_name = "resnet50_waterbirds2026-03-18_18-24-11.pth"
+        # define static transform for ResNet inputs
+        static_transform = transforms.Compose([
+            transforms.CenterCrop(178),
+            transforms.Resize(224),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        test_dataset = CelebADataset(train=False, transform=static_transform)
+        unnormalise=True
+        target_class = 1
+        seed=43
     else:
         raise ValueError(f"Unknown visualise type: {visualise_type}")
 
