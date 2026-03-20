@@ -40,15 +40,19 @@ class MaskGenerator:
 
         return methods[method.lower()](model=self.model, target_layers=self.target_layers)
 
-    def apply_mask(self, img_tensor, heatmap):
+    def apply_mask(self, img_tensor, heatmap, n_sigma=2):
         """
-        Core logic for MaskTune: Calculates threshold and applies the mask.
+        Calculate MaskTune threshold and applies the mask.
+        As per the authors, we ignore zeroes when calculating thresholds
         """
-        # --- MaskTune Thresholding Logic  ---
-        # Tau = mu + 2 * sigma
-        mu = np.mean(heatmap)
-        sigma = np.std(heatmap)
-        threshold = mu + 2 * sigma
+        active_pixels = heatmap[heatmap > 0]
+        if len(active_pixels) > 0:
+            mu = np.mean(active_pixels)
+            sigma = np.std(active_pixels)
+        else:
+            mu, sigma = 0, 0
+
+        threshold = mu + n_sigma * sigma
 
         # create binary mask: 1 where heatmap <= threshold, 0 otherwise (masked)
         mask = (heatmap <= threshold).astype(np.float32)
@@ -61,7 +65,7 @@ class MaskGenerator:
         masked_img = img_tensor * mask_tensor
         return masked_img
 
-    def generate_masked_dataset(self, dataset, batch_size=32, save_dir=None):
+    def generate_masked_dataset(self, dataset, batch_size=32, save_dir=None, n_sigma=2):
         """
         Generates masked features. If save_dir is provided, saves images to disk (for CelebA).
         Otherwise, returns a TensorDataset (for MNIST/Waterbirds).
@@ -96,7 +100,7 @@ class MaskGenerator:
             for i in range(images.size(0)):
                 img = images[i]
                 heatmap = grayscale_cams[i]
-                masked_img_tensor = self.apply_mask(img, heatmap)
+                masked_img_tensor = self.apply_mask(img, heatmap, n_sigma=n_sigma)
 
                 if save_dir is not None and img_paths is not None:
                     # unnormalise and save as physical image

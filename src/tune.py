@@ -138,8 +138,7 @@ def main():
         train_transform = None
         if args.dataset == 'celeba' and 'resnet50' in args.model:
             train_transform = transforms.Compose([
-                transforms.CenterCrop(178),
-                transforms.Resize(224),
+                # no centercrop and resize because the saved images are already 224x224
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
