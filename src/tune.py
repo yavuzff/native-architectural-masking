@@ -75,6 +75,7 @@ def main():
 
     # using a very small lr, similar to the final decayed LR from ERM training
     parser.add_argument('--lr', type=float, default=0.001, help="Should be low (e.g. final LR of ERM)")
+    parser.add_argument('--wd', type=float, default=0.0001, help="Weight decay")
     args = parser.parse_args()
 
     # save path will be in masktuned folder with subfolder of model then masked data path
@@ -84,7 +85,7 @@ def main():
     masked_data_folder = f"{args.masked_data_path[:-3]}" if args.masked_data_path.endswith('.pt') else args.masked_data_path
     if masked_data_folder.startswith("data/masked/"):
         masked_data_folder = masked_data_folder[len("data/masked/"):]
-    save_path = f"{MODELS_DIR}/masktune/{model_folder}/{masked_data_folder}/masktuned.pt"
+    save_path = f"{MODELS_DIR}/masktune/{model_folder}/wd-{args.wd}_lr-{args.lr}/{masked_data_folder}/masktuned.pt"
     os.makedirs("/".join(save_path.split("/")[:-1]), exist_ok=True)
     device = get_device()
 
@@ -165,7 +166,7 @@ def main():
     # use workers for faster loading if using physical images
     train_loader = DataLoader(masked_dataset, batch_size=64, shuffle=True, num_workers=2)
 
-    optimiser = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-4)
+    optimiser = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.wd)
     criterion = nn.CrossEntropyLoss()
     trainer = Trainer(
         model=model,
