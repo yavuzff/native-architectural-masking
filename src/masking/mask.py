@@ -17,7 +17,7 @@ def main():
     parser.add_argument('--model', type=str, required=True, help="Path to the trained ERM model")
     parser.add_argument('--dataset', type=str, default='biased_mnist', choices=['biased_mnist', 'waterbirds', 'celeba'])
     parser.add_argument('--xai_method', type=str, default='xgradcam', help="XAI method to use (xgradcam, gradcam)")
-    parser.add_argument('--n_sigma', type=int, default=2, help="Number of sigma for mask thresholding")
+    parser.add_argument('--n_sigma', type=float, default=2, help="Number of sigma for mask thresholding")
     args = parser.parse_args()
 
     if args.model.startswith(MODELS_DIR):
@@ -64,7 +64,7 @@ def main():
 
     # for CelebA we must save to a folder of physical images to avoid crashing RAM
     if args.dataset == 'celeba':
-        save_folder = f"data/masked/{model_folder}/{args.dataset}_{args.xai_method}/"
+        save_folder = f"data/masked/{model_folder}/{args.dataset}_{args.xai_method}_{args.n_sigma}n_sigma_masked/"
         logging.info(f"Dataset is CelebA. Saving physical images to {save_folder} to save RAM.")
         masker.generate_masked_dataset(train_dataset, batch_size=batch_size, save_dir=save_folder, n_sigma=args.n_sigma)
         logging.info("CelebA masks generated successfully.")

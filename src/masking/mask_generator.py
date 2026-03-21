@@ -132,7 +132,7 @@ class MaskGenerator:
             return TensorDataset(masked_X, masked_Y)
 
 
-def visualise_random_samples(mask_generator, dataset, num_samples=5, target_class=None, seed=42, unnormalise=False):
+def visualise_random_samples(mask_generator, dataset, num_samples=5, target_class=None, seed=42, unnormalise=False, n_sigma=2):
     """
     Picks random samples from the dataset, generates their CAMs and masks,
     and plots them. Renders one figure per sample to avoid squishing.
@@ -164,7 +164,7 @@ def visualise_random_samples(mask_generator, dataset, num_samples=5, target_clas
         heatmap = grayscale_cam[0]
 
         # apply mask to the image
-        masked_img_tensor = mask_generator.apply_mask(img_tensor.to(mask_generator.device), heatmap)
+        masked_img_tensor = mask_generator.apply_mask(img_tensor.to(mask_generator.device), heatmap, n_sigma=n_sigma)
 
         if unnormalise:
             mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(mask_generator.device)
@@ -209,6 +209,7 @@ if __name__ == "__main__":
     from torchvision import transforms
 
     visualise_type = "celeba"
+    n_sigma = 0.5
     if visualise_type == "mnist":
         model_name = "simple_cnn_biased_mnist2026-02-22_15-53-02.pth" # matching small
         # initialise dataset
@@ -252,4 +253,4 @@ if __name__ == "__main__":
     masker = MaskGenerator(model, target_layers, method='xgradcam', device=get_device())
 
     # visualise
-    visualise_random_samples(masker, test_dataset, num_samples=10, target_class=target_class, seed=seed, unnormalise=unnormalise)
+    visualise_random_samples(masker, test_dataset, num_samples=10, target_class=target_class, seed=seed, unnormalise=unnormalise, n_sigma=n_sigma)
