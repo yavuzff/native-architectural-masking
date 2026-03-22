@@ -8,13 +8,54 @@ import matplotlib.pyplot as plt
 import os
 from torchvision.transforms.functional import to_pil_image
 
-from pytorch_grad_cam import XGradCAM, GradCAM, HiResCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
+from pytorch_grad_cam import XGradCAM, GradCAM, HiResCAM, GradCAMPlusPlus, EigenCAM
+from captum.attr import Saliency, IntegratedGradients, InputXGradient, GuidedBackprop, DeepLift
 
 from src.data.celeba import CelebADataset
 from src.data.waterbirds import WaterbirdsDataset
 from src.utils import get_device, MODELS_DIR
 from src.data.mnist import BiasedMNIST
+
+
+class CaptumWrapper:
+    """
+    Wraps Captum attribution methods to behave exactly like pytorch_grad_cam.
+    Takes an input tensor, returns a normalized 2D numpy heatmap.
+    """
+
+    def __init__(self, model, captum_method_class):
+        self.model = model
+        self.method = captum_method_class(self.model)
+
+    def __call__(self, input_tensor, targets=None):
+        # we need gradients
+        input_tensor.requires_grad_()
+
+        # if no target provided, attribute to the top predicted class
+        if targets is None:
+            with torch.no_grad():
+                outputs = self.model(input_tensor)
+                targets = outputs.argmax(dim=1)
+
+        # generate attributions: Shape [B, 3, H, W]
+        attributions = self.method.attribute(input_tensor, target=targets)
+
+        # convert to 2D heatmap by taking absolute value and max across color channels
+        # shape becomes [B, H, W]
+        heatmaps = torch.max(torch.abs(attributions), dim=1)[0]
+
+        # normalise each heatmap in the batch to [0, 1] so n_sigma logic works
+        heatmaps_np = heatmaps.detach().cpu().numpy()
+        for i in range(heatmaps_np.shape[0]):
+            h_max = heatmaps_np[i].max()
+            h_min = heatmaps_np[i].min()
+            if h_max > h_min:
+                heatmaps_np[i] = (heatmaps_np[i] - h_min) / (h_max - h_min)
+            else:
+                heatmaps_np[i] = np.zeros_like(heatmaps_np[i])
+
+        return heatmaps_np
 
 
 class MaskGenerator:
@@ -29,16 +70,28 @@ class MaskGenerator:
         """
         Factory to allow easy extension to other XAI methods.
         """
-        methods = {
+        cam_methods = {
             'xgradcam': XGradCAM,
             'gradcam': GradCAM,
             'hirescam': HiResCAM,
+            'gradcam++': GradCAMPlusPlus,
+            'eigencam': EigenCAM,
         }
+        captum_methods = {
+            'saliency': Saliency,  # vanilla gradients
+            #'integrated_gradients': IntegratedGradients, # can't run on mac - fp64 needed
+            'input_x_gradient': InputXGradient,
+            'guided_backprop': GuidedBackprop,
+            'deeplift': DeepLift,
+        }
+        method = method.lower()
+        if method in cam_methods:
+            return cam_methods[method](model=self.model, target_layers=self.target_layers)
+        elif method in captum_methods:
+            return CaptumWrapper(model=self.model, captum_method_class=captum_methods[method])
+        else:
+            raise ValueError(f"Method {method} not implemented.")
 
-        if method.lower() not in methods:
-            raise ValueError(f"Method {method} not implemented. Choose from {list(methods.keys())}")
-
-        return methods[method.lower()](model=self.model, target_layers=self.target_layers)
 
     def apply_mask(self, img_tensor, heatmap, n_sigma=2):
         """
@@ -112,10 +165,10 @@ class MaskGenerator:
                     to_pil_image(vis_masked.cpu()).save(save_path)
                 else:
                     # accumulate in RAM for .pt file
-                    masked_images_list.append(masked_img_tensor.cpu())
-                    labels_list.append(targets[i].cpu())
+                    masked_images_list.append(masked_img_tensor.detach().cpu())
+                    labels_list.append(targets[i].detach().cpu())
                     if has_confounder:
-                        confounders_list.append(batch[3][i].cpu())
+                        confounders_list.append(batch[3][i].detach().cpu())
 
         # if we saved to disk, we don't return a TensorDataset
         if save_dir is not None:
