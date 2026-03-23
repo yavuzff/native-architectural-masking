@@ -51,7 +51,7 @@ def evaluate_worst_group(model, loader, device, name):
             _, predicted = torch.max(outputs.data, 1)
 
             # map target (0/1) and confounder (0/1) to a group index (0-3)
-            group_idx = labels * 2 + confounders.to(device)
+            group_idx = labels * 2 + confounders
             correct = (predicted == labels)
 
             for i in range(len(labels)):

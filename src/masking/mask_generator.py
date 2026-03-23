@@ -65,6 +65,11 @@ class ViTAttentionWrapper:
 
         # gradient based methods
         if self.method in ['grad_attention', 'transformer_attribution']:
+            # freeze model weights
+            # we only want gradients for the attention maps, not the 21M parameters.
+            for param in self.model.parameters():
+                param.requires_grad = False
+
             self.model.zero_grad()
             input_tensor.requires_grad_()
             outputs = self.model(input_tensor)
@@ -76,8 +81,8 @@ class ViTAttentionWrapper:
             one_hot = torch.zeros_like(outputs)
             one_hot.scatter_(1, targets.unsqueeze(1), 1.0)
 
-            # compute gradients
-            outputs.backward(gradient=one_hot, retain_graph=True)
+            # remove retain_graph=True to prevent massive memory leaks
+            outputs.backward(gradient=one_hot)
 
             N = self.attentions[0].size(2)
             device = self.attentions[0].device
@@ -96,7 +101,7 @@ class ViTAttentionWrapper:
                 # initialise rollout with identity matrix
                 rollout = torch.eye(N, device=device).unsqueeze(0).repeat(B, 1, 1)
 
-                # roll out the gradient-weighted attention across ALL layers (Chefer et al.)
+                # roll out the gradient-weighted attention across all layers
                 for attn in self.attentions:
                     grad = attn.grad
 
@@ -115,6 +120,10 @@ class ViTAttentionWrapper:
 
                 # extract the row corresponding to the CLS token's attention
                 cls_attn = rollout[:, 0, 1:]  # [B, N-1]
+
+            # unfreeze weights after we are done
+            for param in self.model.parameters():
+                param.requires_grad = True
 
         else:
             with torch.no_grad():
@@ -172,6 +181,7 @@ class ViTAttentionWrapper:
             else:
                 heatmaps_np[i] = np.zeros_like(heatmaps_np[i])
 
+        self.attentions.clear()
         return heatmaps_np
 
 
@@ -455,7 +465,7 @@ if __name__ == "__main__":
 
     visualise_type = "celeba"
     n_sigma = 2
-    xai_method = "xgradcam"
+    xai_method = "rollout"
     use_vit = True
 
     if visualise_type == "mnist":
