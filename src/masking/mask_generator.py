@@ -462,10 +462,11 @@ def reshape_transform_vit_28(tensor, height=7, width=7):
 
 if __name__ == "__main__":
     from torchvision import transforms
+    logging.basicConfig(level=logging.INFO)
 
     visualise_type = "celeba"
     n_sigma = 2
-    xai_method = "rollout"
+    xai_method = "last_layer_attention"
     use_vit = True
 
     if visualise_type == "mnist":
@@ -499,7 +500,8 @@ if __name__ == "__main__":
         if not use_vit:
             model_name = "celebA_ERM_wd-0.0001_lr-0.0001/logs/best_model.pth"
         else:
-            model_name = "vit-std_celeba2026-03-22_11-16-30_epoch_10.pth"
+            #model_name = "vit-std_celeba2026-03-22_11-16-30_epoch_10.pth"
+            model_name = "vit-std_celeba2026-03-23_06-34-17_epoch_10.pth"
         # define static transform for ResNet inputs
         static_transform = transforms.Compose([
             transforms.CenterCrop(178),
