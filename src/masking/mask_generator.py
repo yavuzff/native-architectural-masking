@@ -26,7 +26,7 @@ from src.models.resnet import ResNet50
 class ViTAttentionWrapper:
     """
     Extracts native attention maps from a Vision Transformer using forward hooks.
-    Supports both 'last_layer_attention' and 'rollout'.
+    Supports 'last_layer_attention', 'rollout', and 'grad_attention'.
     """
 
     def __init__(self, model, method='rollout', discard_ratio=0.9):
@@ -53,47 +53,80 @@ class ViTAttentionWrapper:
         logging.info(f"Successfully hooked into {hooked_layers} attention layers.")
 
     def save_attention(self, module, input, output):
-        # input[0] is the softmax-ed attention matrix
-        self.attentions.append(input[0].detach().cpu())
+        # input[0] is the softmax-ed attention matrix.
+        # Kept on device/graph so we can compute gradients later!
+        attn = input[0]
+        if self.method == 'grad_attention':
+            attn.retain_grad()
+        self.attentions.append(attn)
 
     def __call__(self, input_tensor, targets=None):
         self.attentions = []
-        with torch.no_grad():
-            _ = self.model(input_tensor)
-
         B = input_tensor.size(0)
-        N = self.attentions[0].size(2)  # number of tokens (e.g., 197 or 50)
 
-        if self.method == 'last_layer_attention':
-            # take the last layer's attention, mean across heads
-            attn = self.attentions[-1].mean(dim=1)  # [B, N, N]
-            cls_attn = attn[:, 0, 1:]  # [B, N-1]
+        # class specific grad-attention inspired by grad-cam
+        if self.method == 'grad_attention':
+            self.model.zero_grad()
+            input_tensor.requires_grad_()
+            outputs = self.model(input_tensor)
 
-        elif self.method == 'rollout':
-            # initialise rollout with identity matrix
-            rollout = torch.eye(N).unsqueeze(0).repeat(B, 1, 1)
+            if targets is None:
+                targets = outputs.argmax(dim=1)
 
-            for attn in self.attentions:
-                # average across heads
-                A = attn.mean(dim=1)  # [B, N, N]
+            # one-hot encode targets for backward pass
+            one_hot = torch.zeros_like(outputs)
+            one_hot.scatter_(1, targets.unsqueeze(1), 1.0)
 
-                # filter noise by discarding the lowest weights
-                if self.discard_ratio > 0:
-                    flat = A.view(B, -1)
-                    k = int(flat.size(-1) * self.discard_ratio)
-                    bottom_k, _ = torch.topk(flat, k, dim=-1, largest=False)
-                    thresholds = bottom_k[:, -1].view(B, 1, 1)
-                    A = torch.where(A < thresholds, torch.zeros_like(A), A)
+            # compute gradients
+            outputs.backward(gradient=one_hot, retain_graph=True)
 
-                # add identity (residual connection) and normalise rows
-                A = A + torch.eye(N).unsqueeze(0)
-                A = A / A.sum(dim=-1, keepdim=True)
+            # get last layer attention and its gradients
+            attn = self.attentions[-1]  # [B, heads, N, N]
+            gradients = attn.grad       # [B, heads, N, N]
 
-                # matrix multiply to unroll the attention graph
-                rollout = torch.bmm(A, rollout)
+            # weight attention by positive gradients (GradCAM style)
+            weights = torch.clamp(gradients, min=0.0)
+            weighted_attn = (weights * attn).mean(dim=1)  # [B, N, N]
+            cls_attn = weighted_attn[:, 0, 1:]            # [B, N-1]
 
-            # extract the row corresponding to the CLS token's attention to spatial patches
-            cls_attn = rollout[:, 0, 1:]  # [B, N-1]
+        # class-agnostic methods
+        else:
+            with torch.no_grad():
+                _ = self.model(input_tensor)
+
+            N = self.attentions[0].size(2)  # number of tokens
+
+            if self.method == 'last_layer_attention':
+                # take the last layer's attention, mean across heads
+                attn = self.attentions[-1].mean(dim=1)  # [B, N, N]
+                cls_attn = attn[:, 0, 1:]               # [B, N-1]
+
+            elif self.method == 'rollout':
+                # initialise rollout with identity matrix on the correct device
+                device = self.attentions[0].device
+                rollout = torch.eye(N, device=device).unsqueeze(0).repeat(B, 1, 1)
+
+                for attn in self.attentions:
+                    # average across heads
+                    A = attn.mean(dim=1)  # [B, N, N]
+
+                    # filter noise by discarding the lowest weights
+                    if self.discard_ratio > 0:
+                        flat = A.view(B, -1)
+                        k = int(flat.size(-1) * self.discard_ratio)
+                        bottom_k, _ = torch.topk(flat, k, dim=-1, largest=False)
+                        thresholds = bottom_k[:, -1].view(B, 1, 1)
+                        A = torch.where(A < thresholds, torch.zeros_like(A), A)
+
+                    # add identity (residual connection) and normalise rows
+                    A = A + torch.eye(N, device=device).unsqueeze(0)
+                    A = A / A.sum(dim=-1, keepdim=True)
+
+                    # matrix multiply to unroll the attention graph
+                    rollout = torch.bmm(A, rollout)
+
+                # extract the row corresponding to the CLS token's attention
+                cls_attn = rollout[:, 0, 1:]  # [B, N-1]
 
         # reshape the 1D patch array into a 2D grid
         grid_size = int(np.sqrt(cls_attn.size(1)))
@@ -102,7 +135,7 @@ class ViTAttentionWrapper:
         # scale the grid up to the original image size (e.g., 224x224)
         heatmaps = F.interpolate(heatmaps, size=(input_tensor.size(2), input_tensor.size(3)), mode='bilinear',
                                  align_corners=False)
-        heatmaps_np = heatmaps.squeeze(1).numpy()
+        heatmaps_np = heatmaps.squeeze(1).detach().cpu().numpy()
 
         # normalise to [0, 1] per heatmap so n_sigma logic works flawlessly
         for i in range(B):
@@ -182,7 +215,7 @@ class MaskGenerator:
             'guided_backprop': GuidedBackprop,
             'deeplift': DeepLift,
         }
-        attention_methods = ['rollout', 'last_layer_attention']
+        attention_methods = ['rollout', 'last_layer_attention', 'grad_attention']
 
         method = method.lower()
         if method in cam_methods:
@@ -396,7 +429,7 @@ if __name__ == "__main__":
 
     visualise_type = "celeba"
     n_sigma = 2
-    xai_method = "last_layer_attention"
+    xai_method = "grad_attention"
     use_vit = True
 
     if visualise_type == "mnist":
