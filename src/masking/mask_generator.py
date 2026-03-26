@@ -465,9 +465,10 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     visualise_type = "celeba"
-    n_sigma = 2
-    xai_method = "last_layer_attention"
+    n_sigma = 3.0
+    xai_method = "transformer_attribution" # rollout, last_layer_attention, grad_attention, transformer_attribution
     use_vit = True
+    rollout_discard_ratio = 0.5
 
     if visualise_type == "mnist":
         if not use_vit:
@@ -511,7 +512,7 @@ if __name__ == "__main__":
         ])
         test_dataset = CelebADataset(train=False, transform=static_transform)
         unnormalise=True
-        target_class = 1
+        target_class = 1 # class 0, seed 48. Or class 1, seed 49.
         seed=43
     else:
         raise ValueError(f"Unknown visualise type: {visualise_type}")
@@ -534,7 +535,7 @@ if __name__ == "__main__":
     else:
         logging.info("Detected CNN/ResNet! No reshape transform needed.")
 
-    masker = MaskGenerator(model, target_layers, method=xai_method, device=get_device(), reshape_transform=reshape_transform)
+    masker = MaskGenerator(model, target_layers, method=xai_method, device=get_device(), reshape_transform=reshape_transform, rollout_discard_ratio=rollout_discard_ratio)
 
     # visualise
     visualise_random_samples(masker, test_dataset, num_samples=10, target_class=target_class, seed=seed, unnormalise=unnormalise, n_sigma=n_sigma)
