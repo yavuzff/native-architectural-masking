@@ -1,5 +1,6 @@
 # mask-tune
 
+This project investigates and extends the [MaskTune](https://arxiv.org/abs/2210.00055) methodology. We reimplement the core algorithm and evaluate it on the Biased MNIST and CelebA datasets to verify its behaviour. We also integrate additional explanation mechanisms, ranging from Class Activation Mapping methods to pixel-level approaches. We extend the evaluation to the [Vision Transformer](https://arxiv.org/abs/2010.11929), introducing attention-based masking methods designed for ViTs as part of the MaskTune framework.
 
 ## Prerequisites
 
